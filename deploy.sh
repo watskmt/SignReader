@@ -201,7 +201,7 @@ docker compose -f docker-compose.prod.yml build api worker
 docker compose -f docker-compose.prod.yml up -d
 
 # nginx を再起動して設定・証明書を最新化
-docker restart signreader-nginx 2>/dev/null || true
+docker compose -f docker-compose.prod.yml -f docker-compose.nginx.yml up -d --force-recreate nginx
 
 # ip_forward はDockerの操作で無効化されることがあるため毎回確認
 sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
