@@ -17,7 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Camera, useCameraDevice } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { useIsFocused } from '@react-navigation/native';
@@ -44,6 +44,7 @@ const CAPTURE_INTERVAL_MS = 3000;
 export default function CameraScreen({ navigation }: Props): React.JSX.Element {
   const isFocused = useIsFocused();
   const device = useCameraDevice('back');
+  const { hasPermission, requestPermission } = useCameraPermission();
   const cameraRef = useRef<Camera>(null);
 
   // ── Pi Monitor state ────────────────────────────────────────────────────────
@@ -59,17 +60,11 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
 
   // ── Record state ────────────────────────────────────────────────────────────
   const [isRecording, setIsRecording] = useState(false);
-  const [cameraPermission, setCameraPermission] = useState(false);
   const [recordSessionId, setRecordSessionId] = useState<string | null>(null);
   const [recordSessionTitle, setRecordSessionTitle] = useState<string>('');
   const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { addExtraction } = useAppContext();
-
-  // ── Camera permission ───────────────────────────────────────────────────────
-  useEffect(() => {
-    cameraService.requestCameraPermission().then(setCameraPermission);
-  }, []);
 
   // ── Pi Monitor: fetch helpers ───────────────────────────────────────────────
   const fetchLatestSession = useCallback(async () => {
@@ -170,12 +165,17 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
 
   // ── Record: start / stop ────────────────────────────────────────────────────
   const handleStartRecord = useCallback(async () => {
-    if (!cameraPermission) {
-      Alert.alert('カメラ権限が必要です', '設定からカメラへのアクセスを許可してください。');
-      return;
+    // パーミッションをハンドラ内でリクエスト（未確認なら OS ダイアログを出す）
+    if (!hasPermission) {
+      const granted = await requestPermission();
+      if (!granted) {
+        Alert.alert('カメラ権限が必要です', '設定からカメラへのアクセスを許可してください。');
+        return;
+      }
     }
+
     if (!device) {
-      Alert.alert('カメラが見つかりません');
+      Alert.alert('カメラが見つかりません', 'デバイスの背面カメラを検出できませんでした。');
       return;
     }
 
@@ -209,7 +209,7 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
     } catch {
       Alert.alert('エラー', 'セッションの作成に失敗しました。接続を確認してください。');
     }
-  }, [cameraPermission, device]);
+  }, [hasPermission, requestPermission, device]);
 
   const handleStopRecord = useCallback(() => {
     if (captureIntervalRef.current) {
@@ -244,7 +244,7 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
   return (
     <View style={styles.container}>
       {/* カメラプレビュー (録画中のみ) */}
-      {isRecording && device && cameraPermission && (
+      {isRecording && device && hasPermission && (
         <Camera
           ref={cameraRef}
           style={styles.cameraPreview}
