@@ -168,6 +168,52 @@ REMOTE
     fi
 }
 
+# ─────────────────────── admin-cert (管理画面用SSL) ───────────────────────────
+
+ADMIN_DOMAIN="admin.signreader.amtech-service.com"
+
+cmd_admin_cert() {
+    check_config
+    info "管理画面用 SSL 証明書を取得します: ${ADMIN_DOMAIN}"
+
+    info "DNS解決を確認中..."
+    RESOLVED_IP=$(dig +short "${ADMIN_DOMAIN}" @8.8.8.8 2>/dev/null || echo "")
+    if [[ "$RESOLVED_IP" != "$SERVER_HOST" ]]; then
+        warn "DNSのIPアドレス (${RESOLVED_IP}) とサーバー (${SERVER_HOST}) が一致しません"
+        warn "証明書取得に失敗する可能性があります。DNS設定を確認してください。"
+        read -p "続行しますか？ (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            error "中止しました"
+        fi
+    fi
+
+    ssh_cmd bash << REMOTE
+set -euo pipefail
+cd ${DEPLOY_DIR}/backend
+
+${COMPOSE_CMD} stop nginx
+
+sudo docker run --rm -p 80:80 \
+    -v /etc/letsencrypt:/etc/letsencrypt \
+    -v ${DEPLOY_DIR}/backend/certbot-data:/var/www/certbot \
+    certbot/certbot certonly \
+    --standalone \
+    -d ${ADMIN_DOMAIN} \
+    --non-interactive \
+    --agree-tos \
+    --email ${EMAIL} \
+    --keep-until-expiring
+
+sudo chown -R ${SERVER_USER}:${SERVER_USER} /etc/letsencrypt
+
+${COMPOSE_CMD} up -d nginx
+REMOTE
+
+    info "管理画面用 SSL 証明書取得完了！"
+    info "次のステップ: ./scripts/setup-nginx.sh deploy"
+}
+
 # ─────────────────────────────── renew ────────────────────────────────────────
 
 cmd_renew() {
@@ -210,9 +256,17 @@ echo "=== コンテナ状態 ==="
 ${COMPOSE_CMD} ps nginx
 
 echo ""
-echo "=== SSL 証明書有効期限 ==="
+echo "=== SSL 証明書有効期限 (API) ==="
 if sudo test -d /etc/letsencrypt/live/${DOMAIN}; then
     sudo openssl x509 -in /etc/letsencrypt/live/${DOMAIN}/cert.pem -noout -dates
+else
+    echo "証明書が見つかりません"
+fi
+
+echo ""
+echo "=== SSL 証明書有効期限 (Admin) ==="
+if sudo test -d /etc/letsencrypt/live/${ADMIN_DOMAIN}; then
+    sudo openssl x509 -in /etc/letsencrypt/live/${ADMIN_DOMAIN}/cert.pem -noout -dates
 else
     echo "証明書が見つかりません"
 fi
@@ -232,24 +286,26 @@ REMOTE
 COMMAND="${1:-setup}"
 
 case "$COMMAND" in
-    setup)  cmd_setup ;;
-    cert)   cmd_cert ;;
-    deploy) cmd_deploy ;;
-    renew)  cmd_renew ;;
-    status) cmd_status ;;
+    setup)      cmd_setup ;;
+    cert)       cmd_cert ;;
+    admin-cert) cmd_admin_cert ;;
+    deploy)     cmd_deploy ;;
+    renew)      cmd_renew ;;
+    status)     cmd_status ;;
     *)
-        echo "使い方: $0 [setup|cert|deploy|renew|status]"
+        echo "使い方: $0 [setup|cert|admin-cert|deploy|renew|status]"
         echo ""
-        echo "  setup   nginx コンテナの設定と起動（HTTP）"
-        echo "  cert    Let's Encrypt SSL 証明書を取得"
-        echo "  deploy  HTTPS 設定に切り替え"
-        echo "  renew   SSL 証明書を更新"
-        echo "  status  nginx/SSL の状態を確認"
+        echo "  setup       nginx コンテナの設定と起動（HTTP）"
+        echo "  cert        Let's Encrypt SSL 証明書を取得 (api.signreader.amtech-service.com)"
+        echo "  admin-cert  管理画面用 SSL 証明書を取得 (admin.signreader.amtech-service.com)"
+        echo "  deploy      HTTPS 設定に切り替え"
+        echo "  renew       SSL 証明書を更新"
+        echo "  status      nginx/SSL の状態を確認"
         echo ""
         echo "環境変数:"
-        echo "  SERVER_HOST=157.120.32.158  デプロイ先サーバー（必須）"
+        echo "  SERVER_HOST=157.120.32.158                デプロイ先サーバー（必須）"
         echo "  DOMAIN=api.signreader.amtech-service.com  ドメイン名（必須）"
-        echo "  EMAIL=admin@example.com     Let's Encrypt 登録用メール"
+        echo "  EMAIL=admin@example.com                   Let's Encrypt 登録用メール"
         exit 1
         ;;
 esac
