@@ -4,7 +4,7 @@
 
 ## 概要
 
-SignReader はモバイル端末からビデオフレームを取得し、FastAPI バックエンドへ送信して PaddleOCR で OCR 処理を行います。ファジーマッチングで重複を排除し、GPS 座標と共に PostgreSQL へ保存します。モバイルクライアントは React Native 0.75 と TypeScript で構築しています。
+SignReader は Raspberry Pi Zero W に接続した USB ウェブカメラでフレームをキャプチャし、FastAPI バックエンドへ送信して PaddleOCR で OCR 処理を行います。ファジーマッチングで重複を排除し、GPS 座標と共に PostgreSQL へ保存します。モバイルクライアントは React Native 0.75 と TypeScript で構築した Pi Monitor（リアルタイム結果表示）と Record（スマホカメラ録画送信）の 2 つのモードを持ちます。
 
 詳細な開発者向けドキュメントは [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md) を参照してください。
 
@@ -22,7 +22,7 @@ SignReader はモバイル端末からビデオフレームを取得し、FastAP
 |---|---|
 | モバイルクライアント | React Native 0.75.4、TypeScript |
 | ナビゲーション | React Navigation v6 |
-| カメラ | react-native-vision-camera v4 |
+| カメラ | react-native-vision-camera v3（RN 0.75 互換パッチ適用済み） |
 | HTTP クライアント | Axios（タイムアウト 30 秒） |
 | バックエンド API | FastAPI 0.104、Python 3.10 |
 | OCR エンジン | PaddleOCR 2.7.3（paddlepaddle 2.6.2 CPU） |
@@ -32,6 +32,7 @@ SignReader はモバイル端末からビデオフレームを取得し、FastAP
 | マイグレーション | Alembic 1.12 |
 | テスト（バックエンド） | pytest 7.4、pytest-asyncio、pytest-cov |
 | テスト（モバイル） | Jest 29、@testing-library/react-native |
+| キャプチャクライアント | Raspberry Pi Zero W + USB ウェブカメラ + Python 3（OpenCV） |
 
 ## Android ビルド環境
 
@@ -58,6 +59,12 @@ SignReader/
 ├── scripts/
 │   ├── rocky-setup.sh               # Rocky Linux VPS 初期セットアップ
 │   └── nginx-signreader.conf        # nginx サブドメイン設定テンプレート
+│
+├── raspberry-pi/
+│   ├── capture.py                   # Pi Zero W ウェブカメラキャプチャクライアント
+│   ├── install.sh                   # Pi セットアップスクリプト
+│   ├── requirements.txt             # Python 依存パッケージ
+│   └── signreader-capture.service  # systemd サービスユニット
 │
 ├── backend/
 │   ├── .env.example
@@ -110,7 +117,7 @@ SignReader/
         │   ├── camera.ts
         │   └── storage.ts
         ├── screens/
-        │   ├── CameraScreen.tsx
+        │   ├── CameraScreen.tsx     # Pi Monitor（ポーリング）＋ Record（スマホカメラ）
         │   ├── SessionListScreen.tsx
         │   └── ResultsScreen.tsx
         └── __tests__/services/
@@ -161,6 +168,43 @@ npx react-native run-android
 ```
 
 > **本番 API への接続:** `src/config/api.ts` の `API_BASE_URL` は `https://api.signreader.amtech-service.com` に設定済みです。
+>
+> **モバイル機能:** CameraScreen は Pi Monitor モード（3 秒ポーリングで OCR 結果をリアルタイム表示）と Record モード（スマホカメラで撮影・OCR 送信）の 2 モードを持ちます。Record モードには VisionCamera v3 を lazy-load で使用しています。
+
+### Raspberry Pi キャプチャクライアント
+
+Raspberry Pi Zero W に USB ウェブカメラを接続し、バックエンドへフレームを送信するクライアントです。
+
+```bash
+# Pi 上で実行
+cd raspberry-pi
+bash install.sh
+```
+
+インストール後、`/opt/signreader-pi/.env` で API URL やキャプチャ間隔を設定できます。
+
+```bash
+# 状態確認
+sudo systemctl status signreader-capture
+
+# ログ確認
+sudo journalctl -u signreader-capture -f
+
+# 設定変更後の再起動
+sudo nano /opt/signreader-pi/.env
+sudo systemctl restart signreader-capture
+```
+
+**主な環境変数:**
+
+| 変数 | デフォルト | 説明 |
+|---|---|---|
+| `SIGNREADER_API_URL` | `https://api.signreader.amtech-service.com` | バックエンド API URL |
+| `CAPTURE_INTERVAL` | `2.0` | キャプチャ間隔（秒） |
+| `CAMERA_INDEX` | `0` | V4L2 デバイスインデックス |
+| `JPEG_QUALITY` | `70` | JPEG 品質（1〜100） |
+| `CAPTURE_WIDTH` / `CAPTURE_HEIGHT` | `640` / `480` | フレーム解像度 |
+| `SESSION_TITLE` | `Pi-YYYYMMDD-HHMM` | セッション名プレフィックス |
 
 ### 自動デプロイ (GitHub Actions)
 
@@ -188,3 +232,14 @@ export DEPLOY_SSH_KEY=~/.ssh/webarena  # 秘密鍵ファイルへのパス
 ```
 
 > **注意:** このサーバーは kernel 6.12（EL10系）のため `/etc/docker/daemon.json` に `{"firewall-backend": "nftables"}` が必須です。deploy.sh が自動設定します。
+
+## nginx サブドメイン構成
+
+本番サーバーでは 2 つのサブドメインを nginx で運用しています。
+
+| サブドメイン | 用途 |
+|---|---|
+| `api.signreader.amtech-service.com` | OCR API（バックエンド FastAPI、ポート 8000 へプロキシ） |
+| `admin.signreader.amtech-service.com` | 管理画面（同じバックエンド、管理者向けルーティング） |
+
+nginx 設定テンプレートは `scripts/nginx-signreader.conf` を参照してください。管理画面用には `server_name admin.signreader.amtech-service.com` のサーバーブロックを追加して、同じ `proxy_pass http://127.0.0.1:8000` へプロキシします。
