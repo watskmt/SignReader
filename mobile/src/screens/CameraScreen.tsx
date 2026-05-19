@@ -61,6 +61,7 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
   const [cameraDevice, setCameraDevice] = useState<CameraDevice | undefined>(undefined);
   const [recordSessionId, setRecordSessionId] = useState<string | null>(null);
   const [recordSessionTitle, setRecordSessionTitle] = useState<string>('');
+  const [recordError, setRecordError] = useState<string | null>(null);
   const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { addExtraction } = useAppContext();
@@ -164,35 +165,35 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
 
   // ── Record: start / stop ────────────────────────────────────────────────────
   const handleStartRecord = useCallback(async () => {
-    // パーミッション確認（フック依存を避けて静的メソッドで直接確認）
-    const permStatus = Camera.getCameraPermissionStatus();
-    if (permStatus !== 'granted') {
-      const result = await Camera.requestCameraPermission();
-      if (result !== 'granted') {
-        Alert.alert('カメラ権限が必要です', '設定からカメラへのアクセスを許可してください。');
+    setRecordError(null);
+    try {
+      // ① パーミッション
+      const permStatus = Camera.getCameraPermissionStatus();
+      if (permStatus !== 'granted') {
+        const result = await Camera.requestCameraPermission();
+        if (result !== 'granted') {
+          setRecordError(`権限なし (status=${permStatus})`);
+          return;
+        }
+      }
+
+      // ② デバイス取得
+      const allDevices = Camera.getAvailableCameraDevices();
+      const backCamera = allDevices.find((d) => d.position === 'back');
+      if (!backCamera) {
+        setRecordError(`カメラ未検出 (台数=${allDevices.length})`);
         return;
       }
-    }
+      setCameraDevice(backCamera);
 
-    // デバイス一覧を直接取得（フック初期化タイミングの問題を回避）
-    const allDevices = Camera.getAvailableCameraDevices();
-    const backCamera = allDevices.find((d) => d.position === 'back');
-    if (!backCamera) {
-      Alert.alert(
-        'カメラが見つかりません',
-        `検出台数: ${allDevices.length}台。アプリを再起動してください。`,
-      );
-      return;
-    }
-    setCameraDevice(backCamera);
-
-    try {
+      // ③ セッション作成
       const title = `録画 ${new Date().toLocaleTimeString('ja-JP')}`;
       const session = await createSession({ title });
       setRecordSessionId(session.id);
       setRecordSessionTitle(title);
       setIsRecording(true);
 
+      // ④ フレームキャプチャ開始
       captureIntervalRef.current = cameraService.startFrameCapture(
         cameraRef,
         CAPTURE_INTERVAL_MS,
@@ -213,9 +214,10 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
           }
         },
       );
-    } catch {
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setRecordError(`エラー: ${msg}`);
       setCameraDevice(undefined);
-      Alert.alert('エラー', 'セッションの作成に失敗しました。接続を確認してください。');
     }
   }, []);
 
@@ -324,6 +326,13 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
             ))
         )}
       </ScrollView>
+
+      {/* Record エラー表示 */}
+      {recordError ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{recordError}</Text>
+        </View>
+      ) : null}
 
       {/* フッター */}
       <View style={styles.footer}>
@@ -468,4 +477,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   resultsButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  errorBanner: {
+    backgroundColor: 'rgba(229,57,53,0.15)',
+    borderTopWidth: 1,
+    borderTopColor: '#e53935',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  errorText: { color: '#e53935', fontSize: 12 },
 });
