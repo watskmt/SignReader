@@ -7,7 +7,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  AppState,
+  type AppStateStatus,
   Platform,
   ScrollView,
   StyleSheet,
@@ -33,6 +34,8 @@ const POLL_INTERVAL_MS = 3000;
 export default function PiMonitorScreen({ navigation }: Props): React.JSX.Element {
   const isFocused = useIsFocused();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ref で常に最新の sessionId を保持し、poll の stale closure を防ぐ
+  const activeSessionIdRef = useRef<string | null>(null);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSessionTitle, setActiveSessionTitle] = useState<string>('');
@@ -49,9 +52,11 @@ export default function PiMonitorScreen({ navigation }: Props): React.JSX.Elemen
       if (!active) {
         setConnectionStatus('idle');
         setActiveSessionId(null);
+        activeSessionIdRef.current = null;
         return;
       }
-      if (active.id !== activeSessionId) {
+      if (active.id !== activeSessionIdRef.current) {
+        activeSessionIdRef.current = active.id;
         setActiveSessionId(active.id);
         setActiveSessionTitle(active.title);
         setExtractions([]);
@@ -59,7 +64,7 @@ export default function PiMonitorScreen({ navigation }: Props): React.JSX.Elemen
     } catch {
       setConnectionStatus('error');
     }
-  }, [activeSessionId]);
+  }, []);
 
   const fetchExtractions = useCallback(async (sessionId: string) => {
     try {
@@ -85,24 +90,50 @@ export default function PiMonitorScreen({ navigation }: Props): React.JSX.Elemen
     }
   }, [addExtraction]);
 
+  // ref 経由で sessionId を読むので activeSessionId を deps に含めない
   const poll = useCallback(async () => {
     await fetchLatestSession();
-    if (activeSessionId) {
-      await fetchExtractions(activeSessionId);
+    const sessionId = activeSessionIdRef.current;
+    if (sessionId) {
+      await fetchExtractions(sessionId);
     }
-  }, [fetchLatestSession, fetchExtractions, activeSessionId]);
+  }, [fetchLatestSession, fetchExtractions]);
 
-  useEffect(() => {
-    if (!isFocused) {
-      if (pollRef.current) clearInterval(pollRef.current);
-      return;
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    stopPolling();
     poll();
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [isFocused, poll]);
+  }, [poll, stopPolling]);
+
+  // ナビゲーションフォーカスで開始/停止
+  useEffect(() => {
+    if (!isFocused) {
+      stopPolling();
+      return;
+    }
+    startPolling();
+    return stopPolling;
+  }, [isFocused, startPolling, stopPolling]);
+
+  // バックグラウンド復帰時にポーリングを再開
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (!isFocused) return;
+      if (nextState === 'active') {
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
+    return () => subscription.remove();
+  }, [isFocused, startPolling, stopPolling]);
 
   const statusColor = {
     connecting: '#ff9800',
