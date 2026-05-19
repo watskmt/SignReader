@@ -17,7 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
+import { Camera, type CameraDevice } from 'react-native-vision-camera';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { useIsFocused } from '@react-navigation/native';
@@ -43,8 +43,6 @@ const CAPTURE_INTERVAL_MS = 3000;
 
 export default function CameraScreen({ navigation }: Props): React.JSX.Element {
   const isFocused = useIsFocused();
-  const device = useCameraDevice('back');
-  const { hasPermission, requestPermission } = useCameraPermission();
   const cameraRef = useRef<Camera>(null);
 
   // ── Pi Monitor state ────────────────────────────────────────────────────────
@@ -60,6 +58,7 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
 
   // ── Record state ────────────────────────────────────────────────────────────
   const [isRecording, setIsRecording] = useState(false);
+  const [cameraDevice, setCameraDevice] = useState<CameraDevice | undefined>(undefined);
   const [recordSessionId, setRecordSessionId] = useState<string | null>(null);
   const [recordSessionTitle, setRecordSessionTitle] = useState<string>('');
   const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -165,19 +164,27 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
 
   // ── Record: start / stop ────────────────────────────────────────────────────
   const handleStartRecord = useCallback(async () => {
-    // パーミッションをハンドラ内でリクエスト（未確認なら OS ダイアログを出す）
-    if (!hasPermission) {
-      const granted = await requestPermission();
-      if (!granted) {
+    // パーミッション確認（フック依存を避けて静的メソッドで直接確認）
+    const permStatus = Camera.getCameraPermissionStatus();
+    if (permStatus !== 'granted') {
+      const result = await Camera.requestCameraPermission();
+      if (result !== 'granted') {
         Alert.alert('カメラ権限が必要です', '設定からカメラへのアクセスを許可してください。');
         return;
       }
     }
 
-    if (!device) {
-      Alert.alert('カメラが見つかりません', 'デバイスの背面カメラを検出できませんでした。');
+    // デバイス一覧を直接取得（フック初期化タイミングの問題を回避）
+    const allDevices = Camera.getAvailableCameraDevices();
+    const backCamera = allDevices.find((d) => d.position === 'back');
+    if (!backCamera) {
+      Alert.alert(
+        'カメラが見つかりません',
+        `検出台数: ${allDevices.length}台。アプリを再起動してください。`,
+      );
       return;
     }
+    setCameraDevice(backCamera);
 
     try {
       const title = `録画 ${new Date().toLocaleTimeString('ja-JP')}`;
@@ -207,9 +214,10 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
         },
       );
     } catch {
+      setCameraDevice(undefined);
       Alert.alert('エラー', 'セッションの作成に失敗しました。接続を確認してください。');
     }
-  }, [hasPermission, requestPermission, device]);
+  }, []);
 
   const handleStopRecord = useCallback(() => {
     if (captureIntervalRef.current) {
@@ -244,11 +252,11 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
   return (
     <View style={styles.container}>
       {/* カメラプレビュー (録画中のみ) */}
-      {isRecording && device && hasPermission && (
+      {isRecording && cameraDevice && (
         <Camera
           ref={cameraRef}
           style={styles.cameraPreview}
-          device={device}
+          device={cameraDevice}
           isActive={isFocused && isRecording}
           photo
         />
