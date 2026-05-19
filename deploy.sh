@@ -172,6 +172,10 @@ REMOTE
     # .env.prod を転送
     scp_file "backend/.env.prod" "${DEPLOY_DIR}/backend/.env.prod"
 
+    # nginx-https.conf を nginx.conf として配置（YOUR_DOMAIN 残留を防ぐ）
+    info "nginx.conf を更新中..."
+    ssh_cmd "cp ${DEPLOY_DIR}/backend/nginx-https.conf ${DEPLOY_DIR}/backend/nginx.conf"
+
     # ─── リモートでビルド＆起動 ─────────────────────────────────────────────
 
     info "サービスをビルド・起動中..."
