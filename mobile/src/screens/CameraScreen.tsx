@@ -11,13 +11,25 @@ import {
   AppState,
   type AppStateStatus,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Camera, type CameraDevice } from 'react-native-vision-camera';
+// VisionCamera を遅延ロードして初期化エラーで画面全体が壊れるのを防ぐ
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type CameraDevice = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let Camera: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const vc = require('react-native-vision-camera');
+  Camera = vc.Camera;
+} catch {
+  // native module not available
+}
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { useIsFocused } from '@react-navigation/native';
@@ -167,6 +179,11 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
   const handleStartRecord = useCallback(async () => {
     setRecordError(null);
     try {
+      if (!Camera) {
+        setRecordError('カメラモジュールが利用できません');
+        return;
+      }
+
       // ① パーミッション
       const permStatus = Camera.getCameraPermissionStatus();
       if (permStatus !== 'granted') {
@@ -254,14 +271,32 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
   return (
     <View style={styles.container}>
       {/* カメラプレビュー (録画中のみ) */}
-      {isRecording && cameraDevice && (
+      {isRecording && cameraDevice && Camera && (
         <Camera
           ref={cameraRef}
           style={styles.cameraPreview}
           device={cameraDevice}
           isActive={isFocused && isRecording}
           photo
+          onError={(e: { code: string; message: string }) => {
+            if (e.code === 'session/camera-has-been-disconnected' || e.message?.includes('CAMERA_IS_DISABLED_BY_ANDROID')) {
+              handleStopRecord();
+              Alert.alert(
+                'カメラが無効です',
+                'Android の設定でカメラがオフになっています。\nクイック設定またはプライバシー設定からカメラをオンにしてください。',
+              );
+            } else {
+              setRecordError(`カメラエラー: ${e.message}`);
+            }
+          }}
         />
+      )}
+
+      {/* 録画状態インジケーター */}
+      {isRecording && (
+        <View style={styles.recordingBanner}>
+          <Text style={styles.recordingBannerText}>● 録画中</Text>
+        </View>
       )}
 
       {/* Pi Monitor ヘッダー */}
@@ -337,14 +372,15 @@ export default function CameraScreen({ navigation }: Props): React.JSX.Element {
       {/* フッター */}
       <View style={styles.footer}>
         {/* Record / Stop ボタン */}
-        <TouchableOpacity
+        <Pressable
           style={[styles.recordButton, isRecording && styles.recordButtonActive]}
           onPress={isRecording ? handleStopRecord : handleStartRecord}
+          android_ripple={{ color: 'rgba(255,255,255,0.3)', radius: 26 }}
         >
           <View
             style={[styles.recordDot, isRecording && styles.recordDotStop]}
           />
-        </TouchableOpacity>
+        </Pressable>
 
         <TouchableOpacity
           style={styles.sessionsButton}
@@ -392,7 +428,7 @@ const styles = StyleSheet.create({
   },
   updatedText: { color: '#555', fontSize: 11 },
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: 100 },
+  scrollContent: { padding: 16, paddingBottom: 16 },
   loader: { marginTop: 60 },
   emptyContainer: {
     alignItems: 'center',
@@ -428,10 +464,6 @@ const styles = StyleSheet.create({
   confidence: { color: '#4caf50', fontSize: 12, fontWeight: '600' },
   timestamp: { color: '#555', fontSize: 11 },
   footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -477,6 +509,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   resultsButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  recordingBanner: {
+    backgroundColor: '#e53935',
+    paddingVertical: 6,
+    alignItems: 'center',
+  },
+  recordingBannerText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
   errorBanner: {
     backgroundColor: 'rgba(229,57,53,0.15)',
     borderTopWidth: 1,

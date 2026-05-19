@@ -19,3 +19,15 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+// VisionCamera v3 が RN 0.75 の @RequiresOptIn 制限 API を使うためコンパイルエラーになる。
+// Frame Processors は使わないため全サブプロジェクトで opt-in を通す。
+allprojects {
+    plugins.withId("kotlin-android") {
+        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+            kotlinOptions {
+                freeCompilerArgs += ["-opt-in=kotlin.RequiresOptIn"]
+            }
+        }
+    }
+}

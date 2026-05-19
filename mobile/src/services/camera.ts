@@ -4,7 +4,12 @@
 import { Platform } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import { check, PERMISSIONS, request, RESULTS } from 'react-native-permissions';
-import { Camera } from 'react-native-vision-camera';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let Camera: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  Camera = require('react-native-vision-camera').Camera;
+} catch { /* native module not available */ }
 import RNFS from 'react-native-fs';
 
 export interface GpsCoordinates {
