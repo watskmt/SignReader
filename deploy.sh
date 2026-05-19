@@ -185,7 +185,7 @@ docker images signreader-api --format "{{.ID}}" | head -1 > /tmp/signreader_prev
 # ディスク空き確認 → 残量 < 2GB なら dangling イメージ・ビルドキャッシュを削除
 AVAIL_KB=\$(df --output=avail /var/lib/docker 2>/dev/null | tail -1 || df --output=avail / | tail -1)
 if [ "\${AVAIL_KB:-0}" -lt 2097152 ]; then
-    echo "ディスク残量が少ないため不要なイメージ・キャッシュを削除します (avail=${AVAIL_KB}KB)..."
+    echo "ディスク残量が少ないため不要なイメージ・キャッシュを削除します (avail=\${AVAIL_KB}KB)..."
     docker image prune -f
     docker builder prune -f
 fi
